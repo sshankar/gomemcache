@@ -61,6 +61,9 @@ var (
 
 	// ErrNoServers is returned when no servers are configured or available.
 	ErrNoServers = errors.New("memcache: no servers configured or available")
+
+	// ErrCASDisabled is returned when a CAS operation is performed on a CAS disabled client.
+	ErrCASDisabled = errors.New("memcache: cas is disabled on the client")
 )
 
 const (
@@ -143,6 +146,12 @@ type Client struct {
 	// Consider your expected traffic rates and latency carefully. This should
 	// be set to a number higher than your peak parallel requests.
 	MaxIdleConns int
+
+	// DisableCAS when set to true, disables compare and swap specific operations.
+	// For retrieval, get is used instead of gets resulting in Get and GetMulti to
+	// return empty cas id. In this mode, CompareAndSwap is disabled to prevent
+	// undesirable behaviour.
+	DisableCAS bool
 
 	selector ServerSelector
 
@@ -357,8 +366,12 @@ func (c *Client) withKeyRw(key string, fn func(*bufio.ReadWriter) error) error {
 }
 
 func (c *Client) getFromAddr(addr net.Addr, keys []string, cb func(*Item)) error {
+	cmd := "gets"
+	if c.DisableCAS {
+		cmd = "get"
+	}
 	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
-		if _, err := fmt.Fprintf(rw, "gets %s\r\n", strings.Join(keys, " ")); err != nil {
+		if _, err := fmt.Fprintf(rw, "%s %s\r\n", cmd, strings.Join(keys, " ")); err != nil {
 			return err
 		}
 		if err := rw.Flush(); err != nil {
@@ -587,8 +600,12 @@ func (c *Client) prepend(rw *bufio.ReadWriter, item *Item) error {
 // between calls but all other item fields may differ. ErrCASConflict
 // is returned if the value was modified in between the
 // calls. ErrNotStored is returned if the value was evicted in between
-// the calls.
+// the calls. ErrCASDisabled is returned if the call is executed on a
+// client with DisableCAS set to true.
 func (c *Client) CompareAndSwap(item *Item) error {
+	if c.DisableCAS {
+		return ErrCASDisabled
+	}
 	return c.onItem(item, (*Client).cas)
 }
 

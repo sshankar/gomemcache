@@ -71,6 +71,15 @@ func TestUnixSocket(t *testing.T) {
 	testWithClient(t, New(sock))
 }
 
+func TestLocalHostWithoutCAS(t *testing.T) {
+	if !setup(t) {
+		return
+	}
+	client := New(testServer)
+	client.DisableCAS = true
+	testWithClient(t, client)
+}
+
 func mustSetF(t *testing.T, c *Client) func(*Item) {
 	return func(it *Item) {
 		if err := c.Set(it); err != nil {
@@ -240,6 +249,33 @@ func testWithClient(t *testing.T, c *Client) {
 	// Test Ping
 	err = c.Ping()
 	checkErr(err, "error ping: %s", err)
+
+	// test compare and swap
+	mustSet(&Item{Key: "cas", Value: []byte("cas-val-1")})
+	i, err := c.Get("cas")
+	checkErr(err, "error set(cass): %s", err)
+
+	i.Value = []byte("cass-val-2")
+	err = c.CompareAndSwap(i)
+	if c.DisableCAS {
+		if err != ErrCASDisabled {
+			t.Errorf("CompareAndSwap want ErrCASDisabled, got %v", err)
+		}
+	} else {
+		checkErr(err, "error cas(cass)", err)
+	}
+
+	i.Value = []byte("cass-val-fail")
+	err = c.CompareAndSwap(i)
+	if c.DisableCAS {
+		if err != ErrCASDisabled {
+			t.Errorf("CompareAndSwap want ErrCASDisabled, got %v", err)
+		}
+	} else {
+		if err != ErrCASConflict {
+			t.Errorf("cas set with old casid want ErrCASConflict, got %v", err)
+		}
+	}
 }
 
 func testTouchWithClient(t *testing.T, c *Client) {
